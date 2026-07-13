@@ -147,7 +147,7 @@ func main() {
 
 	router := gin.Default()
 	router.Use(cors.New(cors.Config{
-		AllowOrigins: []string{"ebay.kaerdos.dev"},
+		AllowOrigins: []string{"https://ebay.kaerdos.dev"},
 	}))
 
 	router.GET("/listings", ListingHandler(client))
