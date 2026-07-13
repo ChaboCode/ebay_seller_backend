@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	// "github.com/gin-contrib/cors"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
@@ -146,7 +146,9 @@ func main() {
 	client := NewClient(os.Getenv("EBAY_CLIENT_ID"), os.Getenv("EBAY_CLIENT_SECRET"))
 
 	router := gin.Default()
-	// router.Use(cors.New(cors.()))
+	router.Use(cors.New(cors.Config{
+		AllowOrigins: []string{"ebay.kaerdos.dev"},
+	}))
 
 	router.GET("/listings", ListingHandler(client))
 
