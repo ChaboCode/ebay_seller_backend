@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -87,7 +88,7 @@ func (c *Client) getToken() (string, error) {
 
 const browseSearchURL = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
-func (c *Client) SearchBySeller(seller, sort string) ([]byte, error) {
+func (c *Client) SearchBySeller(seller, sort string, limit, offset int) ([]byte, error) {
 	token, err := c.getToken()
 	if err != nil {
 		return nil, err
@@ -96,7 +97,10 @@ func (c *Client) SearchBySeller(seller, sort string) ([]byte, error) {
 	q := url.Values{}
 	q.Set("category_ids", "0")
 	q.Set("filter", fmt.Sprintf("sellers:{%s},buyingOptions:{AUCTION|FIXED_PRICE}", seller))
-	q.Set("limit", "50")
+	q.Set("limit", strconv.Itoa(limit))
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
 	if sort != "" {
 		q.Set("sort", sort)
 	}
@@ -130,7 +134,17 @@ func ListingHandler(client *Client) gin.HandlerFunc {
 		seller := ctx.DefaultQuery("seller", os.Getenv("DEFAULT_SELLER_USERNAME"))
 		sort := ctx.DefaultQuery("sort", "endTimeSoonest")
 
-		data, err := client.SearchBySeller(seller, sort)
+		// eBay Browse API acepta limit 1-200 y offset >= 0.
+		limit, err := strconv.Atoi(ctx.DefaultQuery("limit", "50"))
+		if err != nil || limit <= 0 || limit > 200 {
+			limit = 50
+		}
+		offset, err := strconv.Atoi(ctx.DefaultQuery("offset", "0"))
+		if err != nil || offset < 0 {
+			offset = 0
+		}
+
+		data, err := client.SearchBySeller(seller, sort, limit, offset)
 		if err != nil {
 			ctx.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 			return
