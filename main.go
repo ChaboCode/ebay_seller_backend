@@ -136,6 +136,21 @@ type itemMeta struct {
 	ItemEndDate  string `json:"itemEndDate"`
 }
 
+// browseSort maps the sort values the app sends to values the Browse API
+// accepts (endingSoonest, price, -price, newlyListed). Anything else, such as
+// endTimeFarthest, is not supported by eBay and is dropped, since an invalid
+// value only makes eBay ignore it and return a 12008 warning.
+func browseSort(sortOrder string) string {
+	switch sortOrder {
+	case "endTimeSoonest", "endingSoonest":
+		return "endingSoonest"
+	case "price", "-price", "newlyListed":
+		return sortOrder
+	default:
+		return ""
+	}
+}
+
 // searchSellerPage fetches a single page of a seller's items in one marketplace.
 func (c *Client) searchSellerPage(seller, sortOrder, marketplace string, limit, offset int) (*searchPage, error) {
 	token, err := c.getToken()
@@ -150,8 +165,8 @@ func (c *Client) searchSellerPage(seller, sortOrder, marketplace string, limit, 
 	if offset > 0 {
 		q.Set("offset", strconv.Itoa(offset))
 	}
-	if sortOrder != "" {
-		q.Set("sort", sortOrder)
+	if s := browseSort(sortOrder); s != "" {
+		q.Set("sort", s)
 	}
 
 	req, err := http.NewRequest(http.MethodGet, browseSearchURL+"?"+q.Encode(), nil)
@@ -216,7 +231,8 @@ func (c *Client) searchSellerInMarketplace(seller, sortOrder, marketplace string
 // marketplace failed. Results are cached briefly per seller, since this does
 // on the order of 16 eBay calls per uncached request.
 func (c *Client) SearchSellerAllMarketplaces(seller, sortOrder string) ([]json.RawMessage, error) {
-	if items, ok := c.getCachedSeller(seller); ok {
+	cacheKey := seller + "|" + sortOrder
+	if items, ok := c.getCachedSeller(cacheKey); ok {
 		return items, nil
 	}
 
@@ -253,7 +269,7 @@ func (c *Client) SearchSellerAllMarketplaces(seller, sortOrder string) ([]json.R
 	}
 
 	merged := dedupeAndSortItems(all)
-	c.setCachedSeller(seller, merged)
+	c.setCachedSeller(cacheKey, merged)
 	return merged, nil
 }
 
