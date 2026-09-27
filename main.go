@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -31,6 +32,8 @@ type Client struct {
 
 	cacheMu sync.Mutex
 	cache   map[string]sellerCacheEntry
+
+	imageHTTPClient *http.Client
 }
 
 // sellerCacheEntry holds a short-lived copy of a seller's merged,
@@ -50,6 +53,20 @@ func NewClient(clientID, clientSecret string) *Client {
 		clientSecret: clientSecret,
 		httpClient:   &http.Client{Timeout: 10 * time.Second},
 		cache:        make(map[string]sellerCacheEntry),
+		imageHTTPClient: &http.Client{
+			Timeout: 15 * time.Second,
+			// Re-validate the host on every redirect so an allowed host
+			// can't bounce us to an arbitrary one.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 5 {
+					return errors.New("too many redirects")
+				}
+				if !isAllowedImageURL(req.URL) {
+					return errors.New("redirect to a disallowed host")
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -391,6 +408,67 @@ func ListingHandler(client *Client) gin.HandlerFunc {
 	}
 }
 
+const maxImageBytes = 15 << 20
+
+// isAllowedImageURL reports whether u points to an eBay image host over
+// http(s). The proxy must not be an open relay, so anything else is refused.
+func isAllowedImageURL(u *url.URL) bool {
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	for _, domain := range []string{"ebayimg.com", "ebaystatic.com"} {
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			return true
+		}
+	}
+	return false
+}
+
+// ImageProxyHandler fetches an eBay image server-side and forwards it, so the
+// browser sees it as coming from the same domain as the rest of the app.
+func ImageProxyHandler(client *Client) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		target, err := url.Parse(ctx.Query("url"))
+		if err != nil || !isAllowedImageURL(target) {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid or disallowed image url"})
+			return
+		}
+
+		req, err := http.NewRequestWithContext(ctx.Request.Context(), http.MethodGet, target.String(), nil)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid image url"})
+			return
+		}
+
+		resp, err := client.imageHTTPClient.Do(req)
+		if err != nil {
+			ctx.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			status := http.StatusBadGateway
+			if resp.StatusCode == http.StatusNotFound {
+				status = http.StatusNotFound
+			}
+			ctx.JSON(status, gin.H{"error": "image fetch failed: " + resp.Status})
+			return
+		}
+
+		contentType := resp.Header.Get("Content-Type")
+		if !strings.HasPrefix(contentType, "image/") {
+			ctx.JSON(http.StatusBadGateway, gin.H{"error": "upstream response is not an image"})
+			return
+		}
+
+		ctx.DataFromReader(http.StatusOK, resp.ContentLength, contentType,
+			io.LimitReader(resp.Body, maxImageBytes),
+			map[string]string{"Cache-Control": "public, max-age=86400"})
+	}
+}
+
 func main() {
 	godotenv.Load()
 
@@ -402,6 +480,7 @@ func main() {
 	}))
 
 	router.GET("/listings", ListingHandler(client))
+	router.GET("/image-proxy", ImageProxyHandler(client))
 
 	router.GET("/healtz", func(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, gin.H{
