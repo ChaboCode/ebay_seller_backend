@@ -481,6 +481,7 @@ func main() {
 
 	router.GET("/listings", ListingHandler(client))
 	router.GET("/image-proxy", ImageProxyHandler(client))
+	router.GET("/auctions/ending", EndingAuctionsHandler(client))
 
 	router.GET("/healtz", func(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, gin.H{
