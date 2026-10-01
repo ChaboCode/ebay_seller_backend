@@ -477,11 +477,21 @@ func main() {
 	router := gin.Default()
 	router.Use(cors.New(cors.Config{
 		AllowOrigins: []string{"https://ebay.kaerdos.dev"},
+		AllowMethods: []string{"GET", "POST", "PUT", "OPTIONS"},
+		AllowHeaders: []string{"Origin", "Content-Type", "X-Api-Key"},
 	}))
 
 	router.GET("/listings", ListingHandler(client))
 	router.GET("/image-proxy", ImageProxyHandler(client))
 	router.GET("/auctions/ending", EndingAuctionsHandler(client))
+
+	var odooBridge *OdooBridge
+	if odoo := NewOdooClientFromEnv(); odoo != nil {
+		odooBridge = NewOdooBridge(odoo, client.imageHTTPClient)
+	} else {
+		log.Print("odoo: ODOO_URL / ODOO_DB / ODOO_USERNAME / ODOO_API_KEY not set, /odoo/* disabled")
+	}
+	RegisterOdooRoutes(router, odooBridge)
 
 	router.GET("/healtz", func(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, gin.H{
